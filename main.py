@@ -11,7 +11,13 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 MONGODB_URI = os.environ.get("MONGODB_URI")
 
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
-mongo_client = MongoClient(MONGODB_URI)
+try:
+    mongo_client = MongoClient(MONGODB_URI)
+    mongo_client.admin.command('ping')
+    print("MongoDB подключена успешно!")
+except Exception as e:
+    print(f"Ошибка подключения к MongoDB: {e}")
+    exit(1)
 db = mongo_client["telegram_bot"]
 conversations = db["conversations"]
 
