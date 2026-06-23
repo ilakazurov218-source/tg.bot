@@ -4,6 +4,8 @@ import requests
 from groq import AsyncGroq
 from pymongo import MongoClient
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
@@ -23,6 +25,20 @@ except Exception as e:
 db = mongo_client["telegram_bot"]
 conversations = db["conversations"]
 MAX_HISTORY = 20
+
+# Заглушка для Render
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -71,6 +87,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка при обращении к AI: {e}")
 
 def main():
+    # Запускаем веб-сервер в отдельном потоке
+    threading.Thread(target=run_server, daemon=True).start()
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
