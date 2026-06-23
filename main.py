@@ -13,6 +13,8 @@ MONGODB_URI = os.environ.get("MONGODB_URI")
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 try:
     mongo_client = MongoClient(MONGODB_URI)
+     tls=True,
+   mongo_client = MongoClient(MONGODB_URI, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=30000)
     mongo_client.admin.command('ping')
     print("MongoDB подключена успешно!")
 except Exception as e:
