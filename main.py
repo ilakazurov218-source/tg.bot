@@ -1,30 +1,17 @@
-def main():
-    try:
-        test = requests.get(f"https://api.telegram.org/bot{TOKEN}/getMe", timeout=10)
-        print(f"Тест Telegram API: {test.status_code} - {test.text}")
-    except Exception as e:
-        print(f"Не могу подключиться к Telegram: {e}")
-    
-    threading.Thread(target=run_server, daemon=True).start()
-    print("HTTP сервер запущен")
-    
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
 from groq import AsyncGroq
 from pymongo import MongoClient
 import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import asyncio
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 MONGODB_URI = os.environ.get("MONGODB_URI")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Например: https://your-app.onrender.com
 
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
@@ -40,24 +27,18 @@ db = mongo_client["telegram_bot"]
 conversations = db["conversations"]
 MAX_HISTORY = 20
 
-# Заглушка для Render
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-    def log_message(self, format, *args):
-        pass
+# Flask приложение
+flask_app = Flask(__name__)
 
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    server.serve_forever()
+# Telegram приложение
+telegram_app = Application.builder().token(TOKEN).build()
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     conversations.update_one({"user_id": user_id}, {"$set": {"messages": []}}, upsert=True)
     await update.message.reply_text("Привет! я Болтунчик")
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
@@ -100,14 +81,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Ошибка при обращении к AI: {e}")
 
-def main():
-    # Запускаем веб-сервер в отдельном потоке
-    threading.Thread(target=run_server, daemon=True).start()
 
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+# Регистрируем обработчики
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+
+@flask_app.route("/")
+def index():
+    return "Bot is running!"
+
+
+@flask_app.route(f"/webhook/{TOKEN}", methods=["POST"])
+async def webhook():
+    data = request.get_json()
+    async with telegram_app:
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
+    return "OK", 200
+
+
+async def setup_webhook():
+    await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{TOKEN}")
+    print(f"Webhook установлен: {WEBHOOK_URL}/webhook/{TOKEN}")
+
 
 if __name__ == "__main__":
-    main()
+    # Устанавливаем webhook при старте
+    asyncio.run(setup_webhook())
+
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host="0.0.0.0", port=port)
