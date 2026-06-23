@@ -1,3 +1,17 @@
+def main():
+    try:
+        test = requests.get(f"https://api.telegram.org/bot{TOKEN}/getMe", timeout=10)
+        print(f"Тест Telegram API: {test.status_code} - {test.text}")
+    except Exception as e:
+        print(f"Не могу подключиться к Telegram: {e}")
+    
+    threading.Thread(target=run_server, daemon=True).start()
+    print("HTTP сервер запущен")
+    
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_polling()
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
