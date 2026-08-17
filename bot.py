@@ -68,7 +68,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         ai_response = await groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": "Ты дружелюбный помощник в телеграм-боте. Отвечай кратко и по-русски."},
                 *history
