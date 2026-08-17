@@ -6,6 +6,7 @@ from groq import AsyncGroq
 from pymongo import MongoClient
 import os
 import asyncio
+import threading
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
@@ -32,6 +33,28 @@ flask_app = Flask(__name__)
 
 # Telegram приложение
 telegram_app = Application.builder().token(TOKEN).build()
+
+# --- Постоянный фоновый event loop ---
+# Решает проблему "Event loop is closed": раньше каждый запрос от Flask
+# мог выполняться в новом event loop, а объект telegram_app был привязан
+# к старому. Теперь все асинхронные операции идут через один и тот же loop,
+# который живёт в отдельном потоке всё время работы приложения.
+background_loop = asyncio.new_event_loop()
+
+
+def _start_background_loop(loop: asyncio.AbstractEventLoop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+
+loop_thread = threading.Thread(target=_start_background_loop, args=(background_loop,), daemon=True)
+loop_thread.start()
+
+
+def run_coro(coro):
+    """Запускает корутину в общем фоновом event loop и ждёт результат."""
+    future = asyncio.run_coroutine_threadsafe(coro, background_loop)
+    return future.result()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -86,6 +109,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+# Инициализируем telegram_app один раз в фоновом loop при старте процесса,
+# а не при каждом запросе (раньше это делал "async with telegram_app" в вебхуке).
+run_coro(telegram_app.initialize())
+
 
 @flask_app.route("/")
 def index():
@@ -93,22 +120,21 @@ def index():
 
 
 @flask_app.route(f"/webhook/{TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
     data = request.get_json()
-    async with telegram_app:
-        update = Update.de_json(data, telegram_app.bot)
-        await telegram_app.process_update(update)
+    update = Update.de_json(data, telegram_app.bot)
+    run_coro(telegram_app.process_update(update))
     return "OK", 200
 
 
-async def setup_webhook():
-    await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{TOKEN}")
+def setup_webhook():
+    run_coro(telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{TOKEN}"))
     print(f"Webhook установлен: {WEBHOOK_URL}/webhook/{TOKEN}")
 
 
 if __name__ == "__main__":
     # Устанавливаем webhook при старте
-    asyncio.run(setup_webhook())
+    setup_webhook()
 
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
